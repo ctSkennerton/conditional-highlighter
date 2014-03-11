@@ -1,0 +1,428 @@
+#!/usr/bin/env perl
+###############################################################################
+#
+#    conditional_highlighter
+#
+#    highlight data like excel
+#
+#    Copyright (C) Connor Skennerton
+#
+#    This program is free software: you can redistribute it and/or modify
+#    it under the terms of the GNU General Public License as published by
+#    the Free Software Foundation, either version 3 of the License, or
+#    (at your option) any later version.
+#
+#    This program is distributed in the hope that it will be useful,
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#    GNU General Public License for more details.
+#
+#    You should have received a copy of the GNU General Public License
+#    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+###############################################################################
+
+#pragmas
+use strict;
+use warnings;
+
+#core Perl modules
+use Getopt::Long;
+use Term::ANSIColor;
+use Scalar::Util qw(looks_like_number);
+use Carp;
+use Data::Dumper;
+
+#CPAN modules
+use Tree::Interval;
+use Convert::Color::RGB8;
+
+#locally-written modules
+
+BEGIN {
+    select(STDERR);
+    $| = 1;
+    select(STDOUT);
+    $| = 1;
+}
+
+# edit here to log all external commands
+my $global_log_commands = 0;
+
+# ext command failure levels
+use constant {
+    IGNORE_FAILURE => 0,
+    WARN_ON_FAILURE => 1,
+    DIE_ON_FAILURE => 2
+};
+
+
+# Generate color scale
+# http://www.bretttolbert.com/projects/colorscale/
+#
+my @extended_colors = ("2de69e", "2be684", "2ae669", "28e64e", "27e633", "34e626", "4de624", "67e623", "81e622", "9be620", "b6e61f", "d1e61d", "e6de1c", "e6c21b", "e6a619", "e68918", "e66c16", "e64e15", "e63114", "e61212");
+
+
+
+# get input params and print copyright
+#printAtStart();
+my $global_options = checkParams();
+my $splitter = overrideDefault('\s+', 't');
+my $invert = overrideDefault(0, 'v') ? 48 : 38;
+######################################################################
+# CODE HERE
+######################################################################
+
+# this is the contents of the file, split by row and column
+# it is a nested array
+my @matrix;
+
+my @column_lengths;
+my %row_skips;
+my %column_skips;
+
+if(defined $global_options->{'c'}) {
+    range_to_lookup($global_options->{'c'}, \%column_skips);
+    #print Dumper(\%column_skips);
+}
+
+if(defined $global_options->{'r'}) {
+    range_to_lookup($global_options->{'r'}, \%row_skips);
+    #print Dumper(\%row_skips);
+}
+
+
+# store the highest and lowest numbers seen. Dumby values to begin with
+my $high = undef;
+my $low = undef;
+my $num_colors = scalar @extended_colors;
+
+# Read through the file and determine the high and low points
+while(<>) {
+    chomp;
+    my @fields = split /$splitter/;
+    if(! exists $row_skips{$.-1}) {
+        foreach my $f (0..scalar @fields - 1) {
+            if(! exists($column_skips{$f}) && looks_like_number($fields[$f])) {
+                if(!defined $high) {
+                    $high = $fields[$f];
+                } elsif ($fields[$f] > $high) {
+                    $high = $fields[$f];
+                }
+
+                if(!defined $low) {
+                    $low = $fields[$f];
+                } elsif ($fields[$f] < $low) {
+                    $low = $fields[$f];
+                }
+            }
+        }
+    }
+    push @matrix, \@fields;
+}
+# calculate the range for each bin of the data
+my $step = ($high - $low) / $num_colors;
+#print "H=$high\tL=$low\tS=$step\n";
+
+# this is what's going to be the minimum value for each of the range buckets
+
+my $interval_tree = Tree::Interval->new;
+
+foreach my $color_index (0..$num_colors - 1) {
+
+    my $color = Convert::Color::RGB8->new($extended_colors[$color_index]);
+    my $current_high = $low + $step;
+    #print "$low\t$current_high\n";
+    $interval_tree->insert($low, $current_high, $color);
+    $low = $current_high + 0.0000000001;
+}
+# print out the data with colours
+#print Dumper(\@matrix);
+foreach my $row_index (0..$#matrix - 1) {
+    foreach my $column_index (0..scalar @{$matrix[$row_index]} - 1) {
+        if(!exists($column_skips{$column_index}) && ! exists $row_skips{$row_index} && looks_like_number($matrix[$row_index]->[$column_index])) {
+            my $node = $interval_tree->find($matrix[$row_index]->[$column_index]);
+            my $index = $node->as_xterm->index;
+            #print "$f\t";
+            printf "%-3s%-20s%-3s", "\e[$invert;5;${index}m",$matrix[$row_index]->[$column_index],"\e[m";
+        } else {
+            printf "%-3s%-20s%-3s", "\e[m",$matrix[$row_index]->[$column_index],"\e[m";
+        }
+    }
+    print "\n";
+}
+
+######################################################################
+# CUSTOM SUBS
+######################################################################
+sub range_to_eval {
+    my ($field, $range) = @_;
+    my $str;
+    if($range =~ /^[<>=]/) {
+        # one way range
+        $str = $field.$range;
+    } elsif ($range =~ /,/) {
+        # two-way range
+        my @fields = split /,/, $range;
+        $str = "$field > $fields[0] && $field < $fields[1]";
+    }
+    #print "$str\n";
+    return $str;
+}
+
+
+sub range_to_lookup {
+    my ($range, $hashref) = @_;
+    my @commafields = split /,/, $range;
+    foreach my $field (@commafields) {
+        my @rangefields = split /-/, $field;
+        if(scalar @rangefields == 2) {
+            for(my $i = $rangefields[0]; $i <= $rangefields[1]; $i++) {
+                $hashref->{$i - 1} = 1;
+            }
+        } else {
+            $hashref->{$field - 1} = 1;
+        }
+    }
+}
+######################################################################
+# TEMPLATE SUBS
+
+######################################################################
+# PARAMETERS
+
+sub checkParams {
+    #-----
+    # Do any and all options checking here...
+    #
+    my @standard_options = ( "help|h+", "v+", "t=s", "r=s", "c=s");
+    my %options;
+
+    # Add any other command line options, and the code to handle them
+    #
+    GetOptions( \%options, @standard_options );
+
+    # if no arguments supplied print the usage and exit
+    #
+    #exec("pod2usage $0") if (0 == (keys (%options) ));
+
+    # If the -help option is set, print the usage and exit
+    #
+    exec("pod2usage $0") if $options{'help'};
+
+    # Compulsory items
+    #if(!exists $options{''} ) { printParamError (""); }
+
+    return \%options;
+}
+
+sub printParamError
+{
+    #-----
+    # What to do if there's something wrong with a parameter
+    #
+    my ($error) = @_;
+    print "**ERROR: $0 : $error\n"; exec("pod2usage $0");
+}
+
+sub overrideDefault
+{
+    #-----
+    # Set and override default values for parameters
+    #
+    my ($default_value, $option_name) = @_;
+    if(exists $global_options->{$option_name})
+    {
+        return $global_options->{$option_name};
+    }
+    return $default_value;
+}
+
+######################################################################
+# FILE IO
+
+sub openWrite
+{
+    #-----
+    # Open a file for writing
+    #
+    my ($fn) = @_;
+    open my $fh, ">", $fn or croak "**ERROR: could not open file: $fn for writing $!\n";
+    return $fh;
+}
+
+sub openRead
+{
+    #-----
+    # Open a file for reading
+    #
+    my ($fn) = @_;
+    open my $fh, "<", $fn or croak "**ERROR: could not open file: $fn for reading $!\n";
+    return $fh;
+}
+
+######################################################################
+# EXTERNAL COMMANDS
+#
+# checkAndRunCommand("ls", {
+#                          -a => ""
+#                          },
+#                          WARN_ON_FAILURE);
+
+sub checkFileExists {
+    #-----
+    # Does a file exists?
+    #
+    my ($file) = @_;
+    unless(-e $file) {
+        croak "**ERROR: $0 : Cannot find:\n$file\n";
+    }
+}
+
+sub logExternalCommand
+{
+    #-----
+    # Log a command line command to the command line!
+    #
+    if(1 == $global_log_commands) {
+        print $_[0], "\n";
+    }
+}
+
+sub isCommandInPath
+{
+    #-----
+    # Is this command in the path?
+    #
+    my ($cmd, $failure_type) = @_;
+    if (system("which $cmd |> /dev/null")) {
+        handleCommandFailure($cmd, $failure_type);
+    }
+}
+
+sub runExternalCommand
+{
+    #-----
+    # Run a command line command on the command line!
+    #
+    my ($cmd) = @_;
+    logExternalCommand($cmd);
+    system($cmd);
+}
+
+sub checkAndRunCommand
+{
+    #-----
+    # Run external commands more sanelier
+    #
+    my ($cmd, $params, $failure_type) = @_;
+
+    isCommandInPath($cmd, $failure_type);
+
+    # join the parameters to the command
+    my $param_str = join " ", map {formatParams($_)} @{$params};
+
+    my $cmd_str = $cmd . " " . $param_str;
+
+    logExternalCommand($cmd_str);
+
+    # make sure that all went well
+    if (system($cmd_str)) {
+         handleCommandFailure($cmd_str, $failure_type)
+    }
+}
+
+sub formatParams {
+
+    #---------
+    # Handles and formats the different ways of passing parameters to
+    # checkAndRunCommand
+    #
+    my $ref = shift;
+
+    if (ref($ref) eq "ARRAY") {
+        return join(" ", @{$ref});
+    } elsif (ref($ref) eq "HASH") {
+        return join(" ", map { $_ . " " . $ref->{$_}} keys %{$ref});
+    }
+    croak 'The elements of the $params argument in checkAndRunCommand can ' .
+        'only contain references to arrays or hashes\n';
+}
+
+
+sub handleCommandFailure {
+    #-----
+    # What to do when all goes bad!
+    #
+    my ($cmd, $failure_type) = @_;
+    if (defined($failure_type)) {
+        if ($failure_type == DIE_ON_FAILURE) {
+            croak "**ERROR: $0 : " . $! . "\n";
+        } elsif ($failure_type == WARN_ON_FAILURE) {
+            carp "**WARNING: $0 : " . $! . "\n";
+        }
+    }
+}
+
+
+######################################################################
+# MISC
+
+sub printAtStart {
+print<<"EOF";
+----------------------------------------------------------------
+ $0
+ Copyright (C) Connor Skennerton
+
+ This program comes with ABSOLUTELY NO WARRANTY;
+ This is free software, and you are welcome to redistribute it
+ under certain conditions: See the source for more details.
+----------------------------------------------------------------
+EOF
+}
+
+__DATA__
+
+=head1 NAME
+
+    conditional_highlighter
+
+=head1 VERSION
+
+    0.1
+
+=head1 COPYRIGHT
+
+   copyright (C) Connor Skennerton
+
+   This program is free software: you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation, either version 3 of the License, or
+   (at your option) any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+=head1 DESCRIPTION
+
+   Add ANSI escape codes onto tabular data to colorize the output.  Hopes to replicate
+   the conditional formatting feature of excel without having to leave the commandline
+
+=head1 SYNOPSIS
+
+    conditional_highlighter.pl  [-h] [-v] [-t REGEX] [-r STR] [-c STR] <file>...
+
+      [-h]                   Displays basic usage information
+      [-v]                   Invert the color pallette so that the background is colored
+      [-t REGEX]             Regular expression used to split lines into columns.
+                             Can be any valid perl regular expresion.
+      [-r STR]               List number of lines to skip at the beginning of the file to skip
+      [-c STR]               List Columns to skip, may be in the form of a comma separated list
+                             or as two numbers joined by a hyphen. eg. 1,4,5 or 1-3
+=cut
+
