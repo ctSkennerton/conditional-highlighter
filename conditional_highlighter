@@ -97,12 +97,13 @@ my $high = undef;
 my $low = undef;
 my $num_colors = scalar @extended_colors;
 
+my @column_widths;
 # Read through the file and determine the high and low points
 while(<>) {
     chomp;
     my @fields = split /$splitter/;
-    if(! exists $row_skips{$.-1}) {
-        foreach my $f (0..scalar @fields - 1) {
+    foreach my $f (0..scalar @fields - 1) {
+        if(! exists $row_skips{$.-1}) {
             if(! exists($column_skips{$f}) && looks_like_number($fields[$f])) {
                 if(!defined $high) {
                     $high = $fields[$f];
@@ -116,6 +117,10 @@ while(<>) {
                     $low = $fields[$f];
                 }
             }
+        }
+        $column_widths[$f] //= 0;
+        if($column_widths[$f] < length $fields[$f]){
+            $column_widths[$f] = length $fields[$f];
         }
     }
     push @matrix, \@fields;
@@ -144,9 +149,9 @@ foreach my $row_index (0..$#matrix - 1) {
             my $node = $interval_tree->find($matrix[$row_index]->[$column_index]);
             my $index = $node->as_xterm->index;
             #print "$f\t";
-            printf "%-3s%-20s%-3s", "\e[$invert;5;${index}m",$matrix[$row_index]->[$column_index],"\e[m";
+            printf "%-3s%-*s%-3s", "\e[$invert;5;${index}m",$column_widths[$column_index]+2,$matrix[$row_index]->[$column_index],"\e[m";
         } else {
-            printf "%-3s%-20s%-3s", "\e[m",$matrix[$row_index]->[$column_index],"\e[m";
+            printf "%-3s%-*s%-3s", "\e[m",$column_widths[$column_index]+2, $matrix[$row_index]->[$column_index],"\e[m";
         }
     }
     print "\n";
