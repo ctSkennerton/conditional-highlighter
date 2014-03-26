@@ -28,7 +28,7 @@ with me or something more general.  If you can't install it, it is easy
 enough to download the code manually from the website and install it on
 your machine
 
-###Color::Convert, Color::Convert::RGB8, Color::Convert::XTerm
+###Convert::Color, Convert::Color::RGB8, Convert::Color::XTerm
 These should all install fine through the cpan command-line interface
 
 Caveats
