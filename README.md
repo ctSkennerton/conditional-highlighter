@@ -20,13 +20,9 @@ writing my own implementation.
 
 Dependancies
 ------------
-###Tree::Interval
-I've found this a little tricky to install as it shows up on CPAN when
-doing a web search, BUT cannot be found when trying to install through
-the command-line CPAN command.  I'm not sure if this is just a problem
-with me or something more general.  If you can't install it, it is easy
-enough to download the code manually from the website and install it on
-your machine
+###Tree::Interval::Node
+This will show up as Tree::Interval on the cpan website but it
+will need to be installed as `cpan Tree::Interval::Node`
 
 ###Convert::Color, Convert::Color::RGB8, Convert::Color::XTerm
 These should all install fine through the cpan command-line interface
